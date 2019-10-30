@@ -54,30 +54,15 @@ def init(config, agent='robot', her=False, object_Qfunc=None, backward_dyn=None,
             return env
         return _f   
 
-    if 'Fetch' in ENV_NAME and 'Multi' in ENV_NAME and 'Flex' not in ENV_NAME:
+    if 'Fetch' in ENV_NAME and 'MaRob' in ENV_NAME:
         dummy_env = gym.make(ENV_NAME, n_objects=config['max_nb_objects'], 
                                     obj_action_type=config['obj_action_type'], 
                                     observe_obj_grp=config['observe_obj_grp'],
                                     obj_range=config['obj_range'])
         envs = SubprocVecEnv([make_env(ENV_NAME, i_env, 'Fetch', agent == 'object') for i_env in range(N_ENVS)])
         envs_render = SubprocVecEnv([make_env(ENV_NAME, i_env, 'Fetch', agent == 'object') for i_env in range(1)])
-        n_rob_actions = 4
+        n_rob_actions = 4 * 2 
         n_actions = config['max_nb_objects'] * len(config['obj_action_type']) + n_rob_actions
-    elif 'Fetch' in ENV_NAME and 'Multi' in ENV_NAME and 'Flex' in ENV_NAME:
-        dummy_env = gym.make(ENV_NAME, n_objects=config['max_nb_objects'], 
-                                    obj_action_type=config['obj_action_type'], 
-                                    observe_obj_grp=config['observe_obj_grp'],
-                                    obj_range=config['obj_range'])
-        envs = SubprocVecEnv([make_env(ENV_NAME, i_env, 'Fetch', agent == 'object') for i_env in range(N_ENVS)])
-        envs_render = SubprocVecEnv([make_env(ENV_NAME, i_env, 'Fetch', agent == 'object') for i_env in range(1)])
-        n_rob_actions = 4
-        n_actions = 2 * len(config['obj_action_type']) + n_rob_actions
-    elif 'HandManipulate' in ENV_NAME and 'Multi' in ENV_NAME:
-        dummy_env = gym.make(ENV_NAME, obj_action_type=config['obj_action_type'])
-        envs = SubprocVecEnv([make_env(ENV_NAME, i_env, 'Hand', agent == 'object') for i_env in range(N_ENVS)])
-        envs_render = SubprocVecEnv([make_env(ENV_NAME, i_env, 'Hand', agent == 'object') for i_env in range(N_ENVS)])
-        n_rob_actions = 20
-        n_actions = 1 * len(config['obj_action_type']) + n_rob_actions
     else:
         dummy_env = gym.make(ENV_NAME)
         envs = SubprocVecEnv([make_env(ENV_NAME, i_env, 'Others', agent == 'object') for i_env in range(N_ENVS)])
@@ -90,7 +75,7 @@ def init(config, agent='robot', her=False, object_Qfunc=None, backward_dyn=None,
     K.manual_seed(SEED)
     np.random.seed(SEED)
 
-    observation_space = dummy_env.observation_space.spaces['observation'].shape[1] + dummy_env.observation_space.spaces['desired_goal'].shape[0]
+    observation_space = dummy_env.observation_space.spaces['observation'].shape[1] * 2 + dummy_env.observation_space.spaces['desired_goal'].shape[0]
     action_space = (gym.spaces.Box(-1., 1., shape=(n_rob_actions,), dtype='float32'),
                     gym.spaces.Box(-1., 1., shape=(n_actions-n_rob_actions,), dtype='float32'),
                     gym.spaces.Box(-1., 1., shape=(n_actions,), dtype='float32'))
@@ -149,7 +134,10 @@ def init(config, agent='robot', her=False, object_Qfunc=None, backward_dyn=None,
 
             # Observation normalization
             obs_goal = []
-            obs_goal.append(K.cat([obs[agent_id], goal], dim=-1))
+            if agent_id == 0:
+                obs_goal.append(K.cat([obs[0], obs[1], goal], dim=-1))
+            elif agent_id == 1:
+                obs_goal.append(K.cat([obs[2], goal], dim=-1))
             if normalizer[agent_id] is not None:
                 obs_goal[0] = normalizer[agent_id].preprocess_with_update(obs_goal[0])
 
@@ -172,7 +160,7 @@ def init(config, agent='robot', her=False, object_Qfunc=None, backward_dyn=None,
         sample_her_transitions = make_sample_her_transitions('none', 4, her_reward_fun)
 
     buffer_shapes = {
-        'o' : (config['episode_length'], dummy_env.observation_space.spaces['observation'].shape[1]*2),
+        'o' : (config['episode_length'], dummy_env.observation_space.spaces['observation'].shape[1]*3),
         'ag' : (config['episode_length'], dummy_env.observation_space.spaces['achieved_goal'].shape[0]),
         'g' : (config['episode_length'], dummy_env.observation_space.spaces['desired_goal'].shape[0]),
         'u' : (config['episode_length']-1, action_space[2].shape[0])
@@ -198,7 +186,7 @@ def back_to_dict(state, config):
 
 def rollout(env, model, noise, config, normalizer=None, render=False, agent_id=0, ai_object=False, rob_policy=[0., 0.]):
     trajectories = []
-    for i_agent in range(2):
+    for i_agent in range(3):
         trajectories.append([])
     
     # monitoring variables
@@ -218,7 +206,10 @@ def rollout(env, model, noise, config, normalizer=None, render=False, agent_id=0
         # Observation normalization
         obs_goal = []
         for i_agent in range(2):
-            obs_goal.append(K.cat([obs[i_agent], goal], dim=-1))
+            if i_agent == 0:
+                obs_goal.append(K.cat([obs[0], obs[1], goal], dim=-1))
+            elif i_agent == 1:
+                obs_goal.append(K.cat([obs[2], goal], dim=-1))
             if normalizer[i_agent] is not None:
                 obs_goal[i_agent] = normalizer[i_agent].preprocess_with_update(obs_goal[i_agent])
 
@@ -245,7 +236,10 @@ def rollout(env, model, noise, config, normalizer=None, render=False, agent_id=0
         # Observation normalization
         next_obs_goal = []
         for i_agent in range(2):
-            next_obs_goal.append(K.cat([next_obs[i_agent], goal], dim=-1))
+            if i_agent == 0:
+                next_obs_goal.append(K.cat([next_obs[0], next_obs[1], goal], dim=-1))
+            elif i_agent == 1:
+                next_obs_goal.append(K.cat([next_obs[2], goal], dim=-1))
             if normalizer[i_agent] is not None:
                 next_obs_goal[i_agent] = normalizer[i_agent].preprocess(next_obs_goal[i_agent])
 
@@ -259,7 +253,7 @@ def rollout(env, model, noise, config, normalizer=None, render=False, agent_id=0
             else:
                 episode_reward += (r_intr + reward).squeeze(1).cpu().numpy()
 
-        for i_agent in range(2):
+        for i_agent in range(3):
             state = {
                 'observation'   : state_all['observation'][i_agent],
                 'achieved_goal' : state_all['achieved_goal'],
