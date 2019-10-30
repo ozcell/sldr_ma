@@ -117,7 +117,7 @@ def init(config, agent='robot', her=False, object_Qfunc=None,
                   agent_id=agent_id, object_Qfunc=object_Qfunc, backward_dyn=backward_dyn, 
                   object_policy=object_policy, reward_fun=reward_fun, clip_Q_neg=clip_Q_neg,
                   )
-    normalizer = [Normalizer(), Normalizer()]
+    normalizer = [Normalizer(), Normalizer(), Normalizer()]
 
     for _ in range(1):
         state_all = dummy_env.reset()
@@ -133,6 +133,10 @@ def init(config, agent='robot', her=False, object_Qfunc=None,
             obs_goal.append(K.cat([obs[0], goal], dim=-1))
             if normalizer[0] is not None:
                 obs_goal[0] = normalizer[0].preprocess_with_update(obs_goal[0])
+
+            obs_goal.append(K.cat([obs[1], goal], dim=-1))
+            if normalizer[1] is not None:
+                obs_goal[1] = normalizer[1].preprocess_with_update(obs_goal[1])
 
             action = model.select_action(obs_goal[0], noise).cpu().numpy().squeeze(0)
             
@@ -151,16 +155,14 @@ def init(config, agent='robot', her=False, object_Qfunc=None,
         sample_her_transitions = make_sample_her_transitions('none', 4, her_reward_fun)
 
     buffer_shapes = {
-        'o' : (config['episode_length'], dummy_env.observation_space.spaces['observation'].shape[1]*2),
+        'o' : (config['episode_length'], dummy_env.observation_space.spaces['observation'].shape[1]*3),
         'ag' : (config['episode_length'], dummy_env.observation_space.spaces['achieved_goal'].shape[0]),
         'g' : (config['episode_length'], dummy_env.observation_space.spaces['desired_goal'].shape[0]),
         'u' : (config['episode_length']-1, action_space[2].shape[0])
         }
     memory = ReplayBuffer(buffer_shapes, MEM_SIZE, config['episode_length'], sample_her_transitions)
 
-    experiment_args = ((envs, envs_render), memory, noise, config, normalizer, None)
-
-    print('no normaliser update') 
+    experiment_args = ((envs, envs_render), memory, noise, config, normalizer, None) 
 
     return model, experiment_args
 
@@ -200,7 +202,7 @@ def rollout(env, model, noise, config, normalizer=None, render=False):
 
         # Observation normalization
         obs_goal = []
-        for i_agent in range(2):
+        for i_agent in range(3):
             obs_goal.append(K.cat([obs[i_agent], goal], dim=-1))
             if normalizer[i_agent] is not None:
                 if i_agent == 0:
