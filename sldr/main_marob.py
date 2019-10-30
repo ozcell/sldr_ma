@@ -11,7 +11,7 @@ import torch.nn.functional as F
 
 import gym_wmgds as gym
 
-from sldr.algorithms.ddpg import DDPG_BD
+from sldr.algorithms.ddpg_marob import DDPG_BD
 from sldr.experience import Normalizer
 from sldr.exploration import Noise
 from sldr.utils import Saver, Summarizer, get_params, running_mean
@@ -75,7 +75,8 @@ def init(config, agent='robot', her=False, object_Qfunc=None, backward_dyn=None,
     K.manual_seed(SEED)
     np.random.seed(SEED)
 
-    observation_space = dummy_env.observation_space.spaces['observation'].shape[1] * 2 + dummy_env.observation_space.spaces['desired_goal'].shape[0]
+    observation_space = (dummy_env.observation_space.spaces['observation'].shape[1] * 2 + dummy_env.observation_space.spaces['desired_goal'].shape[0],
+                         dummy_env.observation_space.spaces['observation'].shape[1] + dummy_env.observation_space.spaces['desired_goal'].shape[0])
     action_space = (gym.spaces.Box(-1., 1., shape=(n_rob_actions,), dtype='float32'),
                     gym.spaces.Box(-1., 1., shape=(n_actions-n_rob_actions,), dtype='float32'),
                     gym.spaces.Box(-1., 1., shape=(n_actions,), dtype='float32'))

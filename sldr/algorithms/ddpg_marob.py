@@ -61,8 +61,8 @@ class DDPG_BD(object):
         self.actors_target = []
         self.actors_optim = []
         
-        self.actors.append(Actor(observation_space, action_space[agent_id], discrete, out_func).to(device))
-        self.actors_target.append(Actor(observation_space, action_space[agent_id], discrete, out_func).to(device))
+        self.actors.append(Actor(observation_space[agent_id], action_space[agent_id], discrete, out_func).to(device))
+        self.actors_target.append(Actor(observation_space[agent_id], action_space[agent_id], discrete, out_func).to(device))
         self.actors_optim.append(optimizer(self.actors[0].parameters(), lr = actor_lr))
 
         hard_update(self.actors_target[0], self.actors[0])
@@ -76,8 +76,8 @@ class DDPG_BD(object):
         self.critics_target = []
         self.critics_optim = []
         
-        self.critics.append(Critic(observation_space, action_space[agent_id]).to(device))
-        self.critics_target.append(Critic(observation_space, action_space[agent_id]).to(device))
+        self.critics.append(Critic(observation_space[agent_id], action_space[agent_id]).to(device))
+        self.critics_target.append(Critic(observation_space[agent_id], action_space[agent_id]).to(device))
         self.critics_optim.append(optimizer(self.critics[0].parameters(), lr = critic_lr))
 
         hard_update(self.critics_target[0], self.critics[0])
@@ -88,12 +88,12 @@ class DDPG_BD(object):
 
         # backward dynamics model
         if backward_dyn is None:
-            self.backward = BackwardDyn(observation_space, action_space[1]).to(device)
+            self.backward = BackwardDyn(observation_space[1], action_space[1]).to(device)
             self.backward_optim = optimizer(self.backward.parameters(), lr = critic_lr)
             self.entities.append(self.backward)
             self.entities.append(self.backward_optim)
 
-            self.backward_otw = BackwardDyn(observation_space, action_space[1]).to(device)
+            self.backward_otw = BackwardDyn(observation_space[1], action_space[1]).to(device)
             self.backward_otw_optim = optimizer(self.backward_otw.parameters(), lr = critic_lr)
             self.entities.append(self.backward_otw)
             self.entities.append(self.backward_otw_optim)
@@ -145,7 +145,7 @@ class DDPG_BD(object):
 
     def update_parameters(self, batch, normalizer=None, running_rintr_mean=None):
 
-        observation_space = self.observation_space - K.tensor(batch['g'], dtype=self.dtype, device=self.device).shape[1]
+        observation_space = self.observation_space[0] - K.tensor(batch['g'], dtype=self.dtype, device=self.device).shape[1]
         action_space = self.action_space[0].shape[0]
 
         V = K.zeros((len(batch['o']), 1), dtype=self.dtype, device=self.device)
@@ -236,7 +236,7 @@ class DDPG_BD(object):
 
     def update_backward(self, batch, normalizer=None):
 
-        observation_space = self.observation_space - K.tensor(batch['g'], dtype=self.dtype, device=self.device).shape[1]
+        observation_space = self.observation_space[0] - K.tensor(batch['g'], dtype=self.dtype, device=self.device).shape[1]
         action_space = self.action_space[0].shape[0]
         
         s2 = K.cat([K.tensor(batch['o'], dtype=self.dtype, device=self.device)[:, observation_space:],
@@ -263,7 +263,7 @@ class DDPG_BD(object):
 
     def update_backward_otw(self, batch, normalizer=None):
 
-        observation_space = self.observation_space - K.tensor(batch['g'], dtype=self.dtype, device=self.device).shape[1]
+        observation_space = self.observation_space[0] - K.tensor(batch['g'], dtype=self.dtype, device=self.device).shape[1]
         action_space = self.action_space[0].shape[0]
         
         s2 = K.cat([K.tensor(batch['o'], dtype=self.dtype, device=self.device)[:, observation_space:],
