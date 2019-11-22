@@ -11,12 +11,13 @@ import torch.nn.functional as F
 
 import gym_wmgds as gym
 
-from sldr.algorithms.ddpg_marob import DDPG_BD
 from sldr.experience import Normalizer
 from sldr.exploration import Noise
 from sldr.utils import Saver, Summarizer, get_params, running_mean
 from sldr.agents.basic import Actor 
 from sldr.agents.basic import Critic
+from sldr.replay_buffer import ReplayBuffer
+from sldr.her_sampler import make_sample_her_transitions
 
 import pdb
 
@@ -94,14 +95,10 @@ def init(config, agent='robot', her=False, object_Qfunc=None, backward_dyn=None,
 
     OUT_FUNC = K.tanh 
     if config['agent_alg'] == 'DDPG_BD':
-        MODEL = DDPG_BD
-        from sldr.replay_buffer import ReplayBuffer
-        from sldr.her_sampler import make_sample_her_transitions
+        from sldr.algorithms.ddpg_marob import DDPG_BD
     elif config['agent_alg'] == 'MADDPG_BD':
-        MODEL = MADDPG_BD
-        from sldr.replay_buffer import ReplayBuffer_v2 as ReplayBuffer
-        from sldr.her_sampler import make_sample_her_transitions_v2 as make_sample_her_transitions
-
+        from sldr.algorithms.maddpg_marob import DDPG_BD
+    MODEL = DDPG_BD
     #exploration initialization
     if agent == 'robot':
         agent_id = 0
@@ -142,7 +139,10 @@ def init(config, agent='robot', her=False, object_Qfunc=None, backward_dyn=None,
             if normalizer[agent_id] is not None:
                 obs_goal[0] = normalizer[agent_id].preprocess_with_update(obs_goal[0])
 
-            action = model.select_action(obs_goal[0], noise).cpu().numpy().squeeze(0)
+            if config['agent_alg'] == 'DDPG_BD':
+                action = model.select_action(obs_goal[0], noise).cpu().numpy().squeeze(0)
+            elif config['agent_alg'] == 'MADDPG_BD':
+                action = model.select_action(obs_goal[0], noise, goal_size=goal.shape[1]).cpu().numpy().squeeze(0)
             action_to_env = np.zeros_like(dummy_env.action_space.sample())
             if agent_id == 0:
                 action_to_env[0:action.shape[0]] = action
@@ -214,7 +214,10 @@ def rollout(env, model, noise, config, normalizer=None, render=False, agent_id=0
             if normalizer[i_agent] is not None:
                 obs_goal[i_agent] = normalizer[i_agent].preprocess_with_update(obs_goal[i_agent])
 
-        action = model.select_action(obs_goal[agent_id], noise).cpu().numpy()
+        if config['agent_alg'] == 'DDPG_BD':
+            action = model.select_action(obs_goal[0], noise).cpu().numpy()
+        elif config['agent_alg'] == 'MADDPG_BD':
+            action = model.select_action(obs_goal[0], noise, goal_size=goal.shape[1]).cpu().numpy()
 
         if agent_id == 0:
             action_to_env = np.zeros((len(action), len(env.action_space.sample())))
