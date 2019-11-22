@@ -11,12 +11,13 @@ import torch.nn.functional as F
 
 import gym_wmgds as gym
 
-from sldr.algorithms.ddpg_q import DDPG_BD
 from sldr.experience import Normalizer, RunningMean
 from sldr.exploration import Noise
 from sldr.utils import Saver, Summarizer, get_params
 from sldr.agents.basic import Actor 
 from sldr.agents.basic import Critic
+from sldr.replay_buffer import ReplayBuffer
+from sldr.her_sampler import make_sample_her_transitions
 
 import pdb
 
@@ -76,7 +77,8 @@ def init(config, agent='robot', her=False, object_Qfunc=None,
     K.manual_seed(SEED)
     np.random.seed(SEED)
 
-    observation_space = dummy_env.observation_space.spaces['observation'].shape[1] + dummy_env.observation_space.spaces['desired_goal'].shape[0]
+    observation_space = (dummy_env.observation_space.spaces['observation'].shape[1] * 2 + dummy_env.observation_space.spaces['desired_goal'].shape[0],
+                         dummy_env.observation_space.spaces['observation'].shape[1] + dummy_env.observation_space.spaces['desired_goal'].shape[0])                     
     action_space = (gym.spaces.Box(-1., 1., shape=(n_rob_actions,), dtype='float32'),
                     gym.spaces.Box(-1., 1., shape=(n_actions-n_rob_actions,), dtype='float32'),
                     gym.spaces.Box(-1., 1., shape=(n_actions,), dtype='float32'))
@@ -94,13 +96,10 @@ def init(config, agent='robot', her=False, object_Qfunc=None,
 
     OUT_FUNC = K.tanh 
     if config['agent_alg'] == 'DDPG_BD':
-        MODEL = DDPG_BD
-        from sldr.replay_buffer import ReplayBuffer
-        from sldr.her_sampler import make_sample_her_transitions
+        from sldr.algorithms.ddpg_q_marob import DDPG_BD
     elif config['agent_alg'] == 'MADDPG_BD':
-        MODEL = MADDPG_BD
-        from sldr.replay_buffer import ReplayBuffer_v2 as ReplayBuffer
-        from sldr.her_sampler import make_sample_her_transitions_v2 as make_sample_her_transitions
+        from sldr.algorithms.maddpg_q_marob import DDPG_BD
+    MODEL = DDPG_BD
 
     #exploration initialization
     agent_id = 0
@@ -117,7 +116,7 @@ def init(config, agent='robot', her=False, object_Qfunc=None,
                   agent_id=agent_id, object_Qfunc=object_Qfunc, backward_dyn=backward_dyn, 
                   object_policy=object_policy, reward_fun=reward_fun, clip_Q_neg=clip_Q_neg,
                   )
-    normalizer = [Normalizer(), Normalizer(), Normalizer()]
+    normalizer = [Normalizer(), Normalizer()]
 
     for _ in range(1):
         state_all = dummy_env.reset()
@@ -130,15 +129,14 @@ def init(config, agent='robot', her=False, object_Qfunc=None,
 
             # Observation normalization
             obs_goal = []
-            obs_goal.append(K.cat([obs[0], goal], dim=-1))
+            obs_goal.append(K.cat([obs[0], obs[1], goal], dim=-1))
             if normalizer[0] is not None:
                 obs_goal[0] = normalizer[0].preprocess_with_update(obs_goal[0])
 
-            obs_goal.append(K.cat([obs[1], goal], dim=-1))
-            if normalizer[1] is not None:
-                obs_goal[1] = normalizer[1].preprocess_with_update(obs_goal[1])
-
-            action = model.select_action(obs_goal[0], noise).cpu().numpy().squeeze(0)
+            if config['agent_alg'] == 'DDPG_BD':
+                action = model.select_action(obs_goal[0], noise).cpu().numpy().squeeze(0)
+            elif config['agent_alg'] == 'MADDPG_BD':
+                action = model.select_action(obs_goal[0], noise, goal_size=goal.shape[1]).cpu().numpy().squeeze(0)
             
             action_to_env = np.zeros_like(dummy_env.action_space.sample())
             action_to_env[0:action.shape[0]] = action
@@ -181,7 +179,7 @@ def back_to_dict(state, config):
 
 def rollout(env, model, noise, config, normalizer=None, render=False):
     trajectories = []
-    for i_agent in range(2):
+    for i_agent in range(3):
         trajectories.append([])
     
     # monitoring variables
@@ -202,15 +200,21 @@ def rollout(env, model, noise, config, normalizer=None, render=False):
 
         # Observation normalization
         obs_goal = []
-        for i_agent in range(3):
-            obs_goal.append(K.cat([obs[i_agent], goal], dim=-1))
+        for i_agent in range(2):
+            if i_agent == 0:
+                obs_goal.append(K.cat([obs[0], obs[1], goal], dim=-1))
+            elif i_agent == 1:
+                obs_goal.append(K.cat([obs[2], goal], dim=-1))
             if normalizer[i_agent] is not None:
                 if i_agent == 0:
                     obs_goal[i_agent] = normalizer[i_agent].preprocess_with_update(obs_goal[i_agent])
                 else:
                     obs_goal[i_agent] = normalizer[i_agent].preprocess(obs_goal[i_agent])
 
-        action = model.select_action(obs_goal[0], noise).cpu().numpy()
+        if config['agent_alg'] == 'DDPG_BD':
+            action = model.select_action(obs_goal[0], noise).cpu().numpy()
+        elif config['agent_alg'] == 'MADDPG_BD':
+            action = model.select_action(obs_goal[0], noise, goal_size=goal.shape[1]).cpu().numpy()
 
         action_to_env = np.zeros((len(action), len(env.action_space.sample())))
         action_to_env[:,0:action.shape[1]] = action
@@ -224,7 +228,10 @@ def rollout(env, model, noise, config, normalizer=None, render=False):
         # Observation normalization
         next_obs_goal = []
         for i_agent in range(2):
-            next_obs_goal.append(K.cat([next_obs[i_agent], goal], dim=-1))
+            if i_agent == 0:
+                next_obs_goal.append(K.cat([next_obs[0], next_obs[1], goal], dim=-1))
+            elif i_agent == 1:
+                next_obs_goal.append(K.cat([next_obs[2], goal], dim=-1))
             if normalizer[i_agent] is not None:
                 next_obs_goal[i_agent] = normalizer[i_agent].preprocess(next_obs_goal[i_agent])
 
@@ -235,7 +242,7 @@ def rollout(env, model, noise, config, normalizer=None, render=False):
             r_intr = model.get_obj_reward(obs_goal[1], next_obs_goal[1])
             episode_reward += (r_intr + reward).squeeze(1).cpu().numpy()
 
-        for i_agent in range(2):
+        for i_agent in range(3):
             state = {
                 'observation'   : state_all['observation'][i_agent],
                 'achieved_goal' : state_all['achieved_goal'],
