@@ -185,7 +185,7 @@ def back_to_dict(state, config):
 
     return state_dict
 
-def rollout(env, model, noise, config, normalizer=None, render=False, agent_id=0, ai_object=False, rob_policy=[0., 0.]):
+def rollout(env, model, noise, config, normalizer=None, render=False, agent_id=0, ai_object=False, rob_policy=[0., 0.], no_obj_norm_update=False):
     trajectories = []
     for i_agent in range(3):
         trajectories.append([])
@@ -212,12 +212,18 @@ def rollout(env, model, noise, config, normalizer=None, render=False, agent_id=0
             elif i_agent == 1:
                 obs_goal.append(K.cat([obs[2], goal], dim=-1))
             if normalizer[i_agent] is not None:
-                obs_goal[i_agent] = normalizer[i_agent].preprocess_with_update(obs_goal[i_agent])
+                #if i_agent == 0:
+                if no_obj_norm_update:
+                    obs_goal[i_agent] = normalizer[i_agent].preprocess(obs_goal[i_agent])
+                else:
+                    obs_goal[i_agent] = normalizer[i_agent].preprocess_with_update(obs_goal[i_agent])
+                #elif i_agent == 1:
+                #    obs_goal[i_agent] = normalizer[i_agent].preprocess(obs_goal[i_agent])
 
         if config['agent_alg'] == 'DDPG_BD':
-            action = model.select_action(obs_goal[0], noise).cpu().numpy()
+            action = model.select_action(obs_goal[agent_id], noise).cpu().numpy()
         elif config['agent_alg'] == 'MADDPG_BD':
-            action = model.select_action(obs_goal[0], noise, goal_size=goal.shape[1]).cpu().numpy()
+            action = model.select_action(obs_goal[agent_id], noise, goal_size=goal.shape[1]).cpu().numpy()
 
         if agent_id == 0:
             action_to_env = np.zeros((len(action), len(env.action_space.sample())))
@@ -437,6 +443,89 @@ def run(model, experiment_args, train=True):
         print('Test completed')
 
     return (episode_reward_all, episode_success_all, episode_distance_all), (bestmodel_critic, bestmodel_actor, bestmodel_normalizer)
+
+def inference(model, experiment_args, train=True):
+
+    total_time_start =  time.time()
+
+    envs, memory, noise, config, normalizer, agent_id = experiment_args
+    envs_train, envs_render = envs
+    
+    N_EPISODES = config['n_episodes'] if train else config['n_episodes_test']
+    N_CYCLES = config['n_cycles']
+    N_BATCHES = config['n_batches']
+    N_TEST_ROLLOUTS = config['n_test_rollouts']
+    BATCH_SIZE = config['batch_size']
+    
+    episode_reward_all = []
+    episode_success_all = []
+    episode_distance_all = []
+    episode_reward_mean = []
+    episode_success_mean = []
+    episode_distance_mean = []
+     
+    for i_episode in range(N_EPISODES):
+        
+        episode_time_start = time.time()
+        if train:
+            for i_cycle in range(N_CYCLES):
+                
+                ai_object = 1 if np.random.rand() < config['ai_object_rate']  else 0
+                trajectories, _, _, _ = rollout(envs_train, model, False, config, normalizer, render=False, agent_id=agent_id, ai_object=ai_object, rob_policy=config['rob_policy'], no_obj_norm_update=True)
+                memory.store_episode(trajectories.copy())   
+            
+            # <-- end loop: i_cycle
+
+        episode_reward_cycle = []
+        episode_succeess_cycle = []
+        episode_distance_cycle = []
+        rollout_per_env = N_TEST_ROLLOUTS // config['n_envs']
+        for i_rollout in range(rollout_per_env):
+            render = config['render'] == 2 and i_episode % config['render'] == 0
+            _, episode_reward, success, distance = rollout(envs_train, model, False, config, normalizer=normalizer, render=render, agent_id=agent_id, ai_object=False, rob_policy=config['rob_policy'], no_obj_norm_update=True)
+                
+            episode_reward_cycle.extend(episode_reward)
+            episode_succeess_cycle.extend(success)
+            episode_distance_cycle.extend(distance)
+
+        render = (config['render'] == 1) and (i_episode % config['render'] == 0) and (envs_render is not None)
+        if render:
+            for i_rollout in range(10):
+                _, _, _, _ = rollout(envs_render, model, False, config, normalizer=normalizer, render=render, agent_id=agent_id, ai_object=False, rob_policy=config['rob_policy'], no_obj_norm_update=True)
+        # <-- end loop: i_rollout 
+            
+        ### MONITORIRNG ###
+        episode_reward_all.append(episode_reward_cycle)
+        episode_success_all.append(episode_succeess_cycle)
+        episode_distance_all.append(episode_distance_cycle)
+
+        episode_reward_mean.append(np.mean(episode_reward_cycle))
+        episode_success_mean.append(np.mean(episode_succeess_cycle))
+        episode_distance_mean.append(np.mean(episode_distance_cycle))
+        plot_durations(np.asarray(episode_reward_mean), np.asarray(episode_success_mean))
+
+        if config['verbose'] > 0:
+        # Printing out
+            if (i_episode+1)%1 == 0:
+                print("==> Episode {} of {}".format(i_episode + 1, N_EPISODES))
+                print('  | Id exp: {}'.format(config['exp_id']))
+                print('  | Exp description: {}'.format(config['exp_descr']))
+                print('  | Env: {}'.format(config['env_id']))
+                print('  | Process pid: {}'.format(config['process_pid']))
+                print('  | Running mean of total reward: {}'.format(episode_reward_mean[-1]))
+                print('  | Success rate: {}'.format(episode_success_mean[-1]))
+                print('  | Distance to target {}'.format(episode_distance_mean[-1]))
+                print('  | Time episode: {}'.format(time.time()-episode_time_start))
+                print('  | Time total: {}'.format(time.time()-total_time_start))
+
+    # <-- end loop: i_episode
+
+    if train:
+        print('Training completed')
+    else:
+        print('Test completed')
+
+    return None
 
 # set up matplotlib
 is_ipython = 'inline' in matplotlib.get_backend()
