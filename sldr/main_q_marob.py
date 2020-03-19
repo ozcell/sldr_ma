@@ -48,6 +48,20 @@ def init(config, agent='robot', her=False, object_Qfunc=None,
                                     obj_range=config['obj_range'])
             elif env_type == 'Hand':
                 env = gym.make(env_id, obj_action_type=config['obj_action_type'])
+            elif env_type == 'FetchMaRobSeq':
+                env = gym.make(env_id, n_objects=config['max_nb_objects'], 
+                                    obj_action_type=config['obj_action_type'], 
+                                    observe_obj_grp=config['observe_obj_grp'],
+                                    obj_range=np.array([0.15, 0.60]),
+                                    widerangeobj=True
+                                    )
+            elif env_type == 'FetchMaRobSeqTest':
+                env = gym.make(env_id, n_objects=config['max_nb_objects'], 
+                                    obj_action_type=config['obj_action_type'], 
+                                    observe_obj_grp=config['observe_obj_grp'],
+                                    obj_range=config['obj_range'],
+                                    widerangeobj=False
+                                    )
             elif env_type == 'Others':
                 env = gym.make(env_id)
             
@@ -57,13 +71,24 @@ def init(config, agent='robot', her=False, object_Qfunc=None,
             return env
         return _f    
 
-    if 'Fetch' in ENV_NAME and 'MaRob' in ENV_NAME:
+    if 'Fetch' in ENV_NAME and 'MaRobLong' in ENV_NAME:
         dummy_env = gym.make(ENV_NAME, n_objects=config['max_nb_objects'], 
                                     obj_action_type=config['obj_action_type'], 
                                     observe_obj_grp=config['observe_obj_grp'],
                                     obj_range=config['obj_range'])
         envs = SubprocVecEnv([make_env(ENV_NAME, i_env, 'Fetch') for i_env in range(N_ENVS)])
+        envs_test = None
         envs_render = SubprocVecEnv([make_env(ENV_NAME, i_env, 'Fetch') for i_env in range(1)])
+        n_rob_actions = 4 * 2
+        n_actions = config['max_nb_objects'] * len(config['obj_action_type']) + n_rob_actions
+    elif 'Fetch' in ENV_NAME and 'MaRobSeq' in ENV_NAME:
+        dummy_env = gym.make(ENV_NAME, n_objects=config['max_nb_objects'], 
+                                    obj_action_type=config['obj_action_type'], 
+                                    observe_obj_grp=config['observe_obj_grp'],
+                                    obj_range=config['obj_range'])
+        envs = SubprocVecEnv([make_env(ENV_NAME, i_env, 'FetchMaRobSeq') for i_env in range(N_ENVS)])
+        envs_test = SubprocVecEnv([make_env(ENV_NAME, i_env, 'FetchMaRobSeqTest') for i_env in range(N_ENVS)])
+        envs_render = SubprocVecEnv([make_env(ENV_NAME, i_env, 'FetchMaRobSeqTest') for i_env in range(1)])
         n_rob_actions = 4 * 2
         n_actions = config['max_nb_objects'] * len(config['obj_action_type']) + n_rob_actions
     else:
@@ -160,7 +185,7 @@ def init(config, agent='robot', her=False, object_Qfunc=None,
         }
     memory = ReplayBuffer(buffer_shapes, MEM_SIZE, config['episode_length'], sample_her_transitions)
 
-    experiment_args = ((envs, envs_render), memory, noise, config, normalizer, None) 
+    experiment_args = ((envs, envs_test, envs_render), memory, noise, config, normalizer, None) 
 
     return model, experiment_args
 
@@ -293,7 +318,9 @@ def run(model, experiment_args, train=True):
     total_time_start =  time.time()
 
     envs, memory, noise, config, normalizer, _ = experiment_args
-    envs_train, envs_render = envs
+    envs_train, envs_test, envs_render = envs
+    if envs_test is None:
+        envs_test = envs_train
     
     N_EPISODES = config['n_episodes'] if train else config['n_episodes_test']
     N_CYCLES = config['n_cycles']
@@ -338,7 +365,7 @@ def run(model, experiment_args, train=True):
         rollout_per_env = N_TEST_ROLLOUTS // config['n_envs']
         for i_rollout in range(rollout_per_env):
             render = config['render'] == 2 and i_episode % config['render'] == 0
-            _, episode_reward, success, _ = rollout(envs_train, model, False, config, normalizer=normalizer, render=render)
+            _, episode_reward, success, _ = rollout(envs_test, model, False, config, normalizer=normalizer, render=render)
                 
             episode_reward_cycle.extend(episode_reward)
             episode_succeess_cycle.extend(success)
